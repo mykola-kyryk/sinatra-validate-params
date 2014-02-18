@@ -11,22 +11,21 @@ class Main < Sinatra::Base
   also_reload './validate_params.rb'
 
   error ParameterValidationError do
-    code = env['sinatra.error'].code
-    body = env['sinatra.error'].body
+    validator = env['sinatra.error'].validator
 
-    [code, {:errors => body}.to_json]
+    [validator.http_response_code, {:errors => validator.errors}.to_json]
   end
 
   get '/user' do
     validate_params :response_code => 400 do
-      param :login_id, :required => true, :minlength => 3, :maxlength => 5
+      param :login_id, :type => :string, :required => true, :minlength => 3, :maxlength => 5
 
-      param :token, :required => { :if => :custom_validator }
+      param :time_npw, :type => :date, :required => true
 
-      param :nonce, :required => { :if => Proc.new { |attr, value| params[:login_id] } }
+      param :count, :type => :integer, :required => { :if => Proc.new { |attr, value| params[:login_id].to_s.length > 3 } }
     end
 
-    #'hello world2'
+    'hello world2'
   end
 
   def custom_validator

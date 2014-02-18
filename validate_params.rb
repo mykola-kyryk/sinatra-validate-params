@@ -1,11 +1,10 @@
 module ValidateParams
 
   class ParameterValidationError < StandardError
-    attr_reader :code, :body
+    attr_reader :validator
 
-    def initialize(options={})
-      @code = options[:code]
-      @body = options[:body]
+    def initialize(validator)
+      @validator = validator
     end
   end
 
@@ -57,10 +56,49 @@ module ValidateParams
     end
   end
 
+  class TypeParameterValidator < BaseParameterValidator
+    def setup(attr, value, options)
+      self.error_code     = "#{attr}_type_is_wrong"
+      self.error_message  = "#{attr} type should be #{options}."
+      self.error_params   = { :type => options }
+    end
+
+    def validate
+      case options
+      when :string
+        is_string?
+      when :integer
+        is_integer?
+      when :boolean
+        is_boolean?
+      when :date
+        is_date?
+      else
+        true
+      end
+    end
+
+    def is_date?
+      value =~ /\A([\+-]?\d{4}(?!\d{2}\b))((-?)((0[1-9]|1[0-2])(\3([12]\d|0[1-9]|3[01]))?|W([0-4]\d|5[0-2])(-?[1-7])?|(00[1-9]|0[1-9]\d|[12]\d{2}|3([0-5]\d|6[1-6])))([T\s]((([01]\d|2[0-3])((:?)[0-5]\d)?|24\:?00)([\.,]\d+(?!:))?)?(\17[0-5]\d([\.,]\d+)?)?([zZ]|([\+-])([01]\d|2[0-3]):?([0-5]\d)?)?)?)?\Z/
+    end
+
+    def is_string?
+      true
+    end
+
+    def is_integer?
+      value.to_i.to_s == value
+    end
+
+    def is_boolean?
+      value =~ /\Atrue|false\Z/i
+    end
+  end
+
   class RequiredParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      error_code     = "#{attr}_is_required"
-      error_message  = "#{attr} is required."
+      self.error_code     = "#{attr}_is_required"
+      self.error_message  = "#{attr} is required."
     end
 
     def validate
@@ -70,9 +108,9 @@ module ValidateParams
 
   class MaxlengthParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      error_code     = "#{attr}_is_too_long"
-      error_message  = "#{attr} can not be longer than #{options} characters."
-      error_params   = {:max_length => options}
+      self.error_code     = "#{attr}_is_too_long"
+      self.error_message  = "#{attr} can not be longer than #{options} characters."
+      self.error_params   = {:max_length => options}
     end
 
     def validate
@@ -82,9 +120,9 @@ module ValidateParams
 
   class MinlengthParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      error_code     = "#{attr}_is_too_short"
-      error_message  = "#{attr} can not be shorter than #{options} characters."
-      error_params   = {:min_length => options}
+      self.error_code     = "#{attr}_is_too_short"
+      self.error_message  = "#{attr} can not be shorter than #{options} characters."
+      self.error_params   = {:min_length => options}
     end
 
     def validate
@@ -92,43 +130,55 @@ module ValidateParams
     end
   end
 
-  def validate_params(options={}, &block)
-    @validate_params_errors = {}
+  class ParamsValidationService
 
-    yield if block_given?
+    attr_accessor :errors, :http_response_code
 
-    code = options[:response_code] || 400
+    def initialize(options = {})
+      @errors = {}
+      @http_response_code = options.fetch(:http_response_code, 400)
+    end
 
-    unless params_valid?
-      raise ParameterValidationError.new(:code => code, :body => @validate_params_errors)
+    def valid?
+      self.errors.empty?
+    end
+
+    def add_error(attr, error_hash = {})
+      self.errors ||= {}
+      self.errors[attr] ||= []
+      self.errors[attr] << {
+          :error_code     => error_hash.fetch(:error_code, ''),
+          :error_message  => error_hash.fetch(:error_message, ''),
+          :error_params   => error_hash.fetch(:error_params, ''),
+      }
     end
   end
 
-  def params_valid?
-    @validate_params_errors.empty?
+  def validate_params(options={}, &block)
+    @validation_service = options.fetch(:validation_service, ParamsValidationService).new(options)
+
+    yield if block_given?
+
+    unless @validation_service.valid?
+      raise ParameterValidationError.new(@validation_service)
+    end
   end
 
   def param(attr, options={})
     options.each do |validator_name, validation_param|
       validator = find_validator(validator_name).new(attr, params[attr], validation_param, self)
       unless validator.valid?
-        add_error(attr, validator.error_code, validator.error_message, validator.error_params)
+        @validation_service.add_error(attr, {
+            :error_code     => validator.error_code,
+            :error_message  => validator.error_message,
+            :error_params   => validator.error_params,
+        })
       end
     end
   end
 
   def find_validator(validator_name)
     ValidateParams.const_get "#{validator_name.to_s.capitalize}ParameterValidator"
-  end
-
-  def add_error(attr, error_code, error_message, error_params)
-    @validate_params_errors ||= {}
-    @validate_params_errors[attr] ||= []
-    @validate_params_errors[attr] << {
-        :error_code     => error_code,
-        :error_message  => error_message,
-        :error_params   => error_params,
-    }
   end
 
 end
