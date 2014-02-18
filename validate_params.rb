@@ -11,12 +11,15 @@ module ValidateParams
 
   class BaseParameterValidator
 
-    attr_reader :attr, :value, :options, :error_code, :error_message, :error_params
+    attr_reader :attr, :value, :options, :scope
+    attr_accessor :error_code, :error_message, :error_params
 
-    def initialize(attr, value, options={})
+    def initialize(attr, value, options, scope)
       @attr           = attr
       @value          = value
       @options        = options
+      @scope          = scope
+
       @error_code     = ''
       @error_message  = ''
       @error_params   = {}
@@ -25,7 +28,29 @@ module ValidateParams
     end
 
     def valid?
-      false
+      if options.is_a?(Hash) && ( options[:if] || options[:unless] )
+        condition = options[:if] || options[:unless]
+
+        should_validate = if condition.is_a? Symbol
+          scope.public_send condition
+        else
+          condition.call(attr, value)
+        end
+
+        should_validate = !should_validate if options[:unless]
+      else
+        should_validate = true
+      end
+
+      if should_validate
+        validate
+      else
+        true
+      end
+    end
+
+    def validate
+      true
     end
 
     def setup(attr, value, options)
@@ -34,35 +59,35 @@ module ValidateParams
 
   class RequiredParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      @error_code     = "#{attr}_is_required"
-      @error_message  = "#{attr} is required."
+      error_code     = "#{attr}_is_required"
+      error_message  = "#{attr} is required."
     end
 
-    def valid?
+    def validate
       !(value.nil? || value.to_s == '')
     end
   end
 
   class MaxlengthParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      @error_code     = "#{attr}_is_too_long"
-      @error_message  = "#{attr} can not be longer than #{options} characters."
-      @error_params   = {:max_length => options}
+      error_code     = "#{attr}_is_too_long"
+      error_message  = "#{attr} can not be longer than #{options} characters."
+      error_params   = {:max_length => options}
     end
 
-    def valid?
+    def validate
       value.to_s.length <= options
     end
   end
 
   class MinlengthParameterValidator < BaseParameterValidator
     def setup(attr, value, options)
-      @error_code     = "#{attr}_is_too_short"
-      @error_message  = "#{attr} can not be shorter than #{options} characters."
-      @error_params   = {:min_length => options}
+      error_code     = "#{attr}_is_too_short"
+      error_message  = "#{attr} can not be shorter than #{options} characters."
+      error_params   = {:min_length => options}
     end
 
-    def valid?
+    def validate
       value.to_s.length >= options
     end
   end
@@ -85,7 +110,7 @@ module ValidateParams
 
   def param(attr, options={})
     options.each do |validator_name, validation_param|
-      validator = find_validator(validator_name).new(attr, params[attr], validation_param)
+      validator = find_validator(validator_name).new(attr, params[attr], validation_param, self)
       unless validator.valid?
         add_error(attr, validator.error_code, validator.error_message, validator.error_params)
       end
